@@ -11,6 +11,7 @@ namespace CSockets
         public event CSocket.ErrorOccured OnError;
 
         private readonly Socket _acceptingSocket;
+        private readonly Thread _acceptingThread;
         private readonly ushort _port;
         private readonly CancellationToken _token;
         private readonly Dictionary<string, CSocket> _connectedClients = new();
@@ -20,23 +21,32 @@ namespace CSockets
             _token = token;
             _port = port;
             _acceptingSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            _acceptingSocket.Bind(new IPEndPoint(IPAddress.Any, _port));
+            _acceptingThread = new Thread(ListenThread);
         }
 
         public bool Connected(string endpoint) => _connectedClients.ContainsKey(endpoint);                
 
         public void Listen()
         {
-            _acceptingSocket.Bind(new IPEndPoint(IPAddress.Any, _port));
-            _acceptingSocket.Listen(1000);
-            var socket = _acceptingSocket.AcceptAsync();
+            _acceptingThread.Start();
+        }
 
-            if (socket != null)
+        void ListenThread()
+        {
+            while (!_token.IsCancellationRequested)
             {
-                var connection = new CSocket(socket.Result, _token);
-                _connectedClients.TryAdd(connection.Endpoint, connection);
-                connection.OnMessageReceived += OnMessageReceived;
-                connection.OnError += Error;
-                OnNewConnection?.Invoke(connection.Endpoint);
+                _acceptingSocket.Listen(1000);
+                var socket = _acceptingSocket.AcceptAsync();
+
+                if (socket != null)
+                {
+                    var connection = new CSocket(socket.Result, _token);
+                    _connectedClients.TryAdd(connection.Endpoint, connection);
+                    connection.OnMessageReceived += OnMessageReceived;
+                    connection.OnError += Error;
+                    OnNewConnection?.Invoke(connection.Endpoint);
+                }
             }
         }
 

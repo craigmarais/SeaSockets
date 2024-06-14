@@ -5,7 +5,7 @@ namespace CSockets
 {
     public class CSocket
     {
-        public delegate void MessageReceived(byte[] data, string endpoint);
+        public delegate void MessageReceived(Memory<byte> data, string endpoint);
         public MessageReceived OnMessageReceived;
         public delegate void ErrorOccured(string message, string endpoint);
         public ErrorOccured OnError;
@@ -23,23 +23,30 @@ namespace CSockets
         public CSocket(Socket socket, CancellationToken token)
         {
             _socket = socket;
+            _socket.NoDelay = true;
+            _socket.Blocking = true;
+            _socket.ReceiveBufferSize = 8192;
+            _socket.SendBufferSize = 8192;
             _token = token;
             _thread = new Thread(Run);
             _thread.Start();
         }
+
         public CSocket(string host, ushort port, CancellationToken token)
         {
             _host = host;
             _port = port;
             _token = token;
             _thread = new Thread(Run);
-            _thread.Start();
         }
 
         public void Connect()
         {
             _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            _socket.NoDelay = true;
+            _socket.Blocking = true;
             _socket.Connect(_host, _port);
+            _thread.Start();
         }
 
         public void Send(byte[] data)
@@ -47,37 +54,32 @@ namespace CSockets
             _socket.Send(data);
         }
 
-        private async void Run()
+        //ref: https://github.com/SeanFellowes/SocketMeister/blob/master/src/Shared.SocketMeister/SocketServer.cs#L485
+        private void Run()
         {
+            var buffer = new byte[_socket.ReceiveBufferSize];
             while (!_token.IsCancellationRequested)
             {
                 try
                 {
-                    if (_socket == null || _socket.Available == 0)
+                    // Read header
+                    var count = _socket.Receive(buffer, 4, SocketFlags.None);
+
+                    if (count == 0)
                         continue;
 
-                    var bodyLength = await ReadHeaderAsync();
-                    await ReadBodyAsync(bodyLength);
+                    var length = MemoryMarshal.Cast<byte, int>(buffer.AsSpan()[..4])[0];
+                    
+                    // Read body
+                    count = _socket.Receive(buffer, length, SocketFlags.None);
+
+                    OnMessageReceived?.Invoke(buffer.AsMemory()[..length], _socket.RemoteEndPoint?.ToString());
                 }
                 catch (Exception ex)
                 {
                     OnError?.Invoke(ex.ToString(), _socket.RemoteEndPoint.ToString());
                 }
             }
-        }
-
-        private async Task<int> ReadHeaderAsync()
-        {
-            Memory<byte> header = new byte[4];
-            await _socket.ReceiveAsync(header, SocketFlags.None, _token);
-            return MemoryMarshal.Cast<byte,int>(header.Span)[0];
-        }
-
-        private async Task ReadBodyAsync(int length)
-        {
-            var buffer = new byte[length];
-            await _socket.ReceiveAsync(buffer, SocketFlags.None, _token);
-            OnMessageReceived?.Invoke(buffer, _socket.RemoteEndPoint?.ToString());
         }
     }
 }

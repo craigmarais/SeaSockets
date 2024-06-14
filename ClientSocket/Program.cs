@@ -1,60 +1,45 @@
-﻿using CSockets;
-using System.Runtime.InteropServices;
+﻿using ClientSocket;
 
 CancellationTokenSource cts = new CancellationTokenSource();
-var sync = new object();
-int count = 0;
-long sum = 0;
+var connections = new List<AckClientConnection>();
 
 new Thread(LogLatencyThread).Start();
 
-CClientSocket _socket = new CClientSocket("127.0.0.1", 7324, cts.Token);
-_socket.OnConnected += HandleConnected;
-_socket.OnMessageReceived += HandlePing;
-_socket.OnError += HandleError;
+if (!int.TryParse(args[0], out var clientCount) || clientCount <= 0)
+{
+    Console.WriteLine($"Argument 0 is not a valid number");
+}
 
-_socket.Connect();
-Ping();
+for (int i = 0; i < clientCount; i++)
+{
+    connections.Add(new AckClientConnection("127.0.0.1", 7324, cts.Token));
+    Console.WriteLine($"Added connection {i}");
+}
+
+for (int i = 0; i < clientCount; i++)
+{
+    connections[i].Start();
+    Console.WriteLine($"Added connection {i}");
+}
 
 KeepAlive(cts);
-
-void HandlePing(byte[] data, string endpoint)
-{
-    var timeSent = MemoryMarshal.Cast<byte, long>(data.AsSpan())[0];
-    var diff = DateTime.Now.Ticks - timeSent;
-
-    lock (sync)
-    {
-        sum += diff;
-        count++;
-    }
-
-    Ping();
-}
-
-void HandleConnected()
-{
-    Console.WriteLine($"Connected to server on {_socket.Endpoint}");
-}
-
-void HandleError(string error, string endpoint)
-{
-    string connectionState = _socket.Connected ? "maintained" : "Broken";
-    Console.WriteLine($"Error on {endpoint} connection. Remote connection is {connectionState}. Error: {error}");
-}
 
 void LogLatencyThread()
 {
     while (!cts.IsCancellationRequested)
     {
-        if (count > 0)
-            Console.WriteLine($"Ping: {sum / count / TimeSpan.TicksPerMillisecond:N0}");
-
-        lock (sync)
+        int count = 0;
+        long sum = 0;
+        for (int i = 0; i < connections.Count; i++)
         {
-            count = 0;
-            sum = 0;
+            var connection = connections[i];
+            var metric = connection.ReadMetrics();
+            count += metric.Item1;
+            sum += metric.Item2;
         }
+
+        if (count != 0)
+            Console.WriteLine($"Connection Ping: {sum / count / TimeSpan.TicksPerMillisecond:N0} ms | Throughput: {count:N0}");
 
         Thread.Sleep(1000);
     }
@@ -73,12 +58,4 @@ void KeepAlive(CancellationTokenSource cts = null)
     {
         Thread.Sleep(1000);
     }
-}
-
-void Ping()
-{
-    var time = new long[] { DateTime.Now.Ticks }.AsSpan();
-    var timeBytes = MemoryMarshal.Cast<long, byte>(time);
-    var bytesToSend = Utilities.AddLength(timeBytes.ToArray());
-    _socket.Send(bytesToSend);
 }

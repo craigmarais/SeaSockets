@@ -16,10 +16,9 @@ _socket.Listen();
 
 KeepAlive(cts);
 
-
-void HandlePing(byte[] data, string endpoint)
+void HandlePing(Memory<byte> data, string endpoint)
 {
-    var timeSent = MemoryMarshal.Cast<byte, long>(data.AsSpan())[0];
+    var timeSent = MemoryMarshal.Cast<byte, long>(data.Span)[0];
     var diff = DateTime.Now.Ticks - timeSent;
 
     lock (sync)
@@ -45,11 +44,11 @@ void LogLatencyThread()
 {
     while (!cts.IsCancellationRequested)
     {
-        if (count > 0)
-            Console.WriteLine($"Ping: {(sum / count) / TimeSpan.TicksPerMillisecond:N0} ms");
-
         lock (sync)
         {
+            if (count > 0)
+                Console.WriteLine($"Ping: {(sum / count) / TimeSpan.TicksPerMillisecond:N0} ms | Throughput: {count:N0}");
+
             count = 0;
             sum = 0;
         }

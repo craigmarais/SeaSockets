@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "ClientSocket": {
+      "commandName": "Project",
+      "commandLineArgs": "10"
+    }
+  }
+}
